@@ -36,7 +36,7 @@ setup(
             # 'cimppc_node=autodrive_mapping.cimppc_node:main',
             # 'pure_pursuit_node=autodrive_mapping.PurePursuit:main',
             # 'gen_traj=autodrive_mapping.gen_traj:main',
-            'ppo_training=autodrive_race.ppo_training:main'
+            'qual_round=autodrive_race.qual_round:main'
         ],
     },
 )
