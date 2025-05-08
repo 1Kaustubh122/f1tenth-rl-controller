@@ -31,12 +31,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            # 'ips_to_tf_brodcaster= autodrive_mapping.ips_to_tf_brodcaster:main',
-            # 'record_waypoints=autodrive_mapping.record_waypoints:main',
-            # 'cimppc_node=autodrive_mapping.cimppc_node:main',
-            # 'pure_pursuit_node=autodrive_mapping.PurePursuit:main',
-            # 'gen_traj=autodrive_mapping.gen_traj:main',
-            'qual_round=autodrive_race.qual_round:main'
+            'ppo_training=autodrive_race.ppo_training:main',
+            'eval=autodrive_race.eval:main',
+            'final_test_training=autodrive_race.final_test_training:main'
         ],
     },
 )

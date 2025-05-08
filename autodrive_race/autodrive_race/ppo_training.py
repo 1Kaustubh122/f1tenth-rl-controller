@@ -1,4 +1,4 @@
-import os
+ import os
 import time
 import rclpy
 import numpy as np
@@ -87,14 +87,14 @@ class F110RaceEnv(gym.Env):
 
     def step(self, action):
         throttle_idx, steering_idx = action
-        throttle = self.throttle_levels[throttle_idx]
+        self.throttle = self.throttle_levels[throttle_idx]
         steering = self.steering_levels[steering_idx]
         
-        throttle_msg = Float32()
-        throttle_msg.data = float(throttle)
+        self.throttle_msg = Float32()
+        self.throttle_msg.data = float(self.throttle)
         steering_msg = Float32()
         steering_msg.data = float(steering)
-        self.throttle_pub.publish(throttle_msg)
+        self.throttle_pub.publish(self.throttle_msg)
         self.steering_pub.publish(steering_msg)
         
         rclpy.spin_once(self.node, timeout_sec=0.1)
@@ -107,20 +107,19 @@ class F110RaceEnv(gym.Env):
             terminated = True
             truncated = False  
         else:
-            reward = 1 + 0.01 * self.speed * self.max_speed
+            reward = 1 + 0.01 * self.throttle * self.max_speed
             terminated = False
-            truncated = False 
+            truncated = False
         
-        if self.lidar_data is None or self.speed is None:
+        if self.lidar_data is None :
             obs = np.zeros(self.observation_space.shape, dtype=np.float32)
         else:
-            obs = np.concatenate([self.lidar_data, [self.speed]])
+            obs = np.concatenate([self.lidar_data, np.array([0.0])])
         
-        info = {} 
+        info = {}  
         
         ## DEBUG
         # print("STEP OBS SHAPE:", np.shape(obs))
-        
         return obs, reward, terminated, truncated, info
     
     
@@ -139,54 +138,87 @@ def main(args=None):
     
     total_timesteps=1000000
     
-    checkpoint_path = os.path.join(
-        get_package_share_directory('autodrive_race'),
-        'checkpoints'
-    )
     
-    best_model_path = os.path.join(
-        get_package_share_directory('autodrive_race'),
-        'best_model'
-    )
     
-    logs_path = os.path.join(
-        get_package_share_directory('autodrive_race'),
-        'logs'
-    )
+    pkg_share = Path(get_package_share_directory('autodrive_race'))
+
+    # Define directories under the package
+    checkpoint_dir   = pkg_share / 'checkpoints'
+    best_model_dir   = pkg_share / 'best_model'
+    logs_dir         = pkg_share / 'logs'
+    tensorboard_dir  = pkg_share / 'tensorboard'
     
-    print(checkpoint_path)
+
+
+    # Make sure all dirs exist
+    for d in (checkpoint_dir, best_model_dir, logs_dir, tensorboard_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    
+    print(checkpoint_dir)
+
+    ckpt_files = list(checkpoint_dir.glob('ppo_model_*_steps.zip'))
+    latest_ckpt = None
+    max_steps = -1
+    pattern = re.compile(r'ppo_model_(\d+)_steps\.zip')
+
+    for f in ckpt_files:
+        m = pattern.match(f.name)
+        if m:
+            steps = int(m.group(1))
+            if steps > max_steps:
+                max_steps = steps
+                latest_ckpt = f
+                
 
     env = make_vec_env(lambda: F110RaceEnv(train=True), n_envs=1)
-    
-    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=checkpoint_path, name_prefix='ppo_model')
-    
-    
-    checkpoint_path = checkpoint_path + '/ppo_last_model.zip'
-    if os.path.exists(checkpoint_path):
-        model = PPO.load(checkpoint_path, env=env)
-        print("Loaded model from checkpoint.")
+
+    # Prepare the model: load or new
+    if latest_ckpt and latest_ckpt.exists():
+        print(f"Resuming from checkpoint: {latest_ckpt.name} ({max_steps} steps)")
+        model = PPO.load(str(latest_ckpt), env=env, device="cpu")
     else:
+        print("No checkpoint found; starting new training.")
         model = PPO(
             "MlpPolicy",
             env,
             verbose=1,
-            learning_rate=0.0003,
+            learning_rate=3e-4,
             batch_size=256,
             n_steps=2048,
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
             ent_coef=0.01,
-            device="cuda",
-            policy_kwargs={"net_arch": [256, 256]}
+            policy_kwargs={"net_arch": [256, 256]},
+            device="cpu",
+            # tensorboard_log=str(tensorboard_dir)
         )
 
-    
-    eval_callback = EvalCallback(env, best_model_save_path=best_model_path, log_path=logs_path, eval_freq=10000)
-    model.learn(total_timesteps=total_timesteps, callback=[checkpoint_callback, eval_callback], progress_bar=True)
-    
-    model.save("ppo_race_model")
-    
+    # Callbacks
+    checkpoint_callback = CheckpointCallback(
+        save_freq=10_000,
+        save_path=str(checkpoint_dir),
+        name_prefix='ppo_model'
+    )
+    eval_callback = EvalCallback(
+        env,
+        best_model_save_path=str(best_model_dir),
+        log_path=str(logs_dir),
+        eval_freq=10_000
+    )
+
+    # Train
+    model.learn(
+        total_timesteps=total_timesteps,
+        callback=[checkpoint_callback, eval_callback],
+        progress_bar=True
+    )
+
+    # Final save
+    final_path = pkg_share / 'ppo_race_model_final.zip'
+    model.save(str(final_path))
+    print(f"Final model saved to {final_path}")
+
     rclpy.shutdown()
 
 if __name__ == '__main__':

@@ -2,4 +2,9 @@
 build
 install 
 log
-src/autodrive_race/autodrive_race/__pycache__
+autodrive_race/autodrive_race/__pycache__
+autodrive_race/best_model/best_model.zip
+autodrive_race/checkpoints/ppo_model_10000_steps.zip
+autodrive_race/checkpoints/ppo_model_20000_steps.zip
+autodrive_race/checkpoints/ppo_model_1000000_steps.zip
+autodrive_race/logs/evaluations.npz
