@@ -174,7 +174,14 @@ class F110RaceEnv(gym.Env):
             obs = np.concatenate([self.lidar_data])
         
         info = {}  
+        
+        ## DEBUG
         # print("STEP OBS SHAPE:", np.shape(obs))
+        # print(f'''
+        # curr lap count: {self.total_lap_count}, last lap: {self.last_lap_count}
+        # lap times:      {self.last_lap_time}     best {self.best_lap_time}  better lap: {is_better_lap}
+        # collision:      {collision} 
+        # ''')
         return obs, reward, terminated, truncated, info
     
     
