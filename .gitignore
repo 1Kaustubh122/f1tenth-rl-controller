@@ -10,3 +10,5 @@ autodrive_race/checkpoints/ppo_model_1000000_steps.zip
 autodrive_race/logs/evaluations.npz
 
 train.md
+
+__pycache__/ 
