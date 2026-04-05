@@ -6,10 +6,11 @@ from setuptools import find_packages, setup
 
 package_name = "autodrive_race"
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
 
 
 def collect_glob(pattern: str):
-    return [str(path) for path in BASE_DIR.glob(pattern)]
+    return glob(pattern)
 
 
 def collect_tree(root: Path, install_prefix: str):
@@ -21,14 +22,14 @@ def collect_tree(root: Path, install_prefix: str):
         if not filenames:
             continue
         destination = Path(install_prefix) / Path(directory).relative_to(root)
-        sources = [str(Path(directory) / filename) for filename in filenames]
+        sources = [os.path.relpath(Path(directory) / filename, start=BASE_DIR) for filename in filenames]
         data_files.append((str(destination), sources))
     return data_files
 
 
 data_files = [
-    ("share/ament_index/resource_index/packages", [str(BASE_DIR / "resource" / package_name)]),
-    (os.path.join("share", package_name), [str(BASE_DIR / "package.xml")]),
+    ("share/ament_index/resource_index/packages", [os.path.join("resource", package_name)]),
+    (os.path.join("share", package_name), ["package.xml"]),
     (os.path.join("share", package_name, "launch"), collect_glob("launch/*.launch.py")),
     (os.path.join("share", package_name, "config"), collect_glob("config/*.yaml")),
     (os.path.join("share", package_name, "autodrive_race"), collect_glob("autodrive_race/*.csv")),
@@ -39,7 +40,7 @@ data_files = [
     (os.path.join("share", package_name, "maps"), collect_glob("maps/*")),
 ]
 data_files.extend(
-    collect_tree(BASE_DIR.parent / "triton_model_repo", os.path.join("share", package_name, "triton_model_repo"))
+    collect_tree(REPO_ROOT / "triton_model_repo", os.path.join("share", package_name, "triton_model_repo"))
 )
 
 setup(
