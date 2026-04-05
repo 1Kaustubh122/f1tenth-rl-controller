@@ -1,121 +1,94 @@
-import os
-import rclpy
-import numpy as np
-import gymnasium as gym
-from pathlib import Path
-from rclpy.node import Node
-from gymnasium import spaces
-from stable_baselines3 import PPO
-from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32, Bool, Int32
-from ament_index_python.packages import get_package_share_directory
+"""Evaluation entry point for saved PPO models."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+
+from autodrive_race.constants import DEFAULT_EVAL_STEPS
+from autodrive_race.utils import inspect_saved_model_contract, resolve_model_path
+
+LOGGER = logging.getLogger(__name__)
 
 
+def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(description="Evaluate a saved PPO racing model.")
+    parser.add_argument("--model-path", type=str, default=None)
+    parser.add_argument("--steps", type=int, default=DEFAULT_EVAL_STEPS)
+    return parser.parse_known_args(argv)
 
-class F110RaceEnv(gym.Env):
-    def __init__(self, train=True):
-        super(F110RaceEnv, self).__init__()
-        self.train = train
-        self.node = Node('f110_race_env')
-        
-        # Subs
-        self.lidar_sub = self.node.create_subscription(
-            LaserScan, '/autodrive/roboracer_1/lidar', self.lidar_callback, 100)
-       
-    
-        # Pubs
-        self.reset_pub = self.node.create_publisher(Bool, '/autodrive/reset_command', 10)
-        self.throttle_pub = self.node.create_publisher(Float32, '/autodrive/roboracer_1/throttle_command', 10)
-        self.steering_pub = self.node.create_publisher(Float32, '/autodrive/roboracer_1/steering_command', 10)
-        
-        #                                   [throttle, steer]
-        self.action_space = spaces.MultiDiscrete([3, 11])
-        
-        #                                                       [lidar beams avg]
-        self.observation_space = spaces.Box(low=0, high=1, shape=(110, ), dtype=np.float32)
-        
-   
-        self.lidar_data = None
-        self.speed = None
 
-        self.throttle = 0.0
-        
-        self.max_range = 10.0  
-        self.max_speed = 10.0   
-        self.throttle_levels = [0.15, 0.25, 0.55]  
-        self.steering_levels = [-1.0, -0.75, -0.55, -0.35, -0.15, 0, 0.15, 0.35, 0.35, 0.55, 1.0]  
-        
+def select_eval_env(model_contract):
+    from autodrive_race.env import make_advanced_env, make_baseline_env, make_experimental_env
 
-    def lidar_callback(self, msg):
-        ranges = np.array(msg.ranges)
-        downsampled = [np.mean(ranges[i:i+10]) for i in range(0, len(ranges), 10)]
-        self.lidar_data = np.clip(downsampled, 0, self.max_range) / self.max_range
+    if model_contract.is_baseline:
+        LOGGER.info(
+            "Using baseline evaluation environment for %s (obs=%s, action=%s).",
+            model_contract.model_path,
+            model_contract.observation_shape,
+            model_contract.action_size,
+        )
+        return make_baseline_env(train=False)
 
-    def step(self, action):
-        throttle_idx, steering_idx = action
-        self.throttle = self.throttle_levels[throttle_idx]
-        steering = self.steering_levels[steering_idx]
-        
-        self.throttle_msg = Float32()
-        self.throttle_msg.data = float(self.throttle)
-        steering_msg = Float32()
-        steering_msg.data = float(steering)
-        self.throttle_pub.publish(self.throttle_msg)
-        self.steering_pub.publish(steering_msg)
-        
-        rclpy.spin_once(self.node, timeout_sec=0.1)
-        
-      
-        reward = 1 + 0.01 * self.throttle * self.max_speed
-        terminated = False
-        truncated = False  
-        
-        if self.lidar_data is None :
-            obs = np.zeros(self.observation_space.shape, dtype=np.float32)
-        else:
-            obs = np.concatenate([self.lidar_data, np.array([0.0])])
-        
-        info = {}  
-        return obs, reward, terminated, truncated, info
-    
-    
-    def reset(self, seed=None, options=None):
-        self.lidar_data = None
-        self.speed = None
+    if model_contract.is_advanced:
+        LOGGER.info(
+            "Using advanced evaluation environment for %s (obs=%s, action=%s).",
+            model_contract.model_path,
+            model_contract.observation_shape,
+            model_contract.action_size,
+        )
+        return make_advanced_env(train=False)
 
-        while self.lidar_data is None:
-            rclpy.spin_once(self.node, timeout_sec=0.1)
+    if model_contract.is_experimental:
+        LOGGER.warning(
+            "Model %s uses the isolated experimental contract; evaluating with the experimental env.",
+            model_contract.model_path,
+        )
+        return make_experimental_env(train=False)
 
-        obs = np.concatenate([self.lidar_data, np.array([0.0])])
-        return obs, {}
-    
-def main(args=None):
-    rclpy.init(args=args)
+    raise ValueError(
+        "Unsupported saved model contract for "
+        f"{model_contract.model_path}: action={model_contract.action_space_type}, "
+        f"obs={model_contract.observation_shape}"
+    )
 
-    env = F110RaceEnv(train=False)
 
-    # pkg_share = Path(get_package_share_directory('roboracer_submission'))
-    # model_path = pkg_share / 'best_model' / 'best_model' 
-    model_path = os.path.join(os.path.dirname(__file__), "best_model/best_model")
+def main(args=None) -> None:
+    cli_args, ros_args = parse_args(args)
+    logging.basicConfig(level=logging.INFO)
 
-    # model_path = 'best_model/best_model.zip'
-    model = PPO.load(str(model_path), device="cpu")
+    import rclpy
+    from stable_baselines3 import PPO
 
-    obs, _ = env.reset()
-    episode_reward = 0
+    rclpy.init(args=ros_args)
+    env = None
+    try:
+        model_path = resolve_model_path(cli_args.model_path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Could not find a saved PPO model at {model_path}")
 
-    ## Need to be adjusted, but lap toic is restricted
-    for _ in range(5000):  
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(action)
-        episode_reward += reward
+        model_contract = inspect_saved_model_contract(model_path)
+        env = select_eval_env(model_contract)
+        model = PPO.load(str(model_path), env=env, device="cpu")
 
-        if terminated or truncated:
-            print(f"Total reward: {episode_reward}")
-            obs, _ = env.reset()
-            episode_reward = 0
+        obs, _ = env.reset()
+        episode_reward = 0.0
 
-    rclpy.shutdown()
+        for _ in range(cli_args.steps):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            episode_reward += reward
 
-if __name__ == '__main__':
+            if terminated or truncated:
+                LOGGER.info("Episode reward: %.3f", episode_reward)
+                obs, _ = env.reset()
+                episode_reward = 0.0
+    finally:
+        if env is not None:
+            env.close()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
     main()
