@@ -61,6 +61,7 @@ def main(args=None) -> None:
     rclpy.init(args=ros_args)
     train_env = None
     eval_env = None
+    model = None
     try:
         package_root = get_primary_package_root()
         checkpoint_dir = package_root / "checkpoints"
@@ -101,11 +102,17 @@ def main(args=None) -> None:
             deterministic=True,
         )
 
-        model.learn(
-            total_timesteps=cli_args.timesteps,
-            callback=[checkpoint_callback, eval_callback],
-            progress_bar=True,
-        )
+        try:
+            model.learn(
+                total_timesteps=cli_args.timesteps,
+                callback=[checkpoint_callback, eval_callback],
+                progress_bar=True,
+            )
+        except KeyboardInterrupt:
+            interrupt_checkpoint = checkpoint_dir / f"ppo_model_{int(model.num_timesteps)}_steps.zip"
+            model.save(str(interrupt_checkpoint))
+            LOGGER.warning("Training interrupted; saved resumable checkpoint to %s", interrupt_checkpoint)
+            raise
 
         final_model_path = package_root / "ppo_race_model_final.zip"
         model.save(str(final_model_path))
